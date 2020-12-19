@@ -1,0 +1,112 @@
+<html>
+    <head>
+        <style>
+            .success, .error {
+                border: 1px solid;
+                margin: 10px 0px;
+                padding: 5px 5px 5px 35px;
+                background-repeat: no-repeat;
+                background-position: 10px center;
+            }
+            .success {
+                color: #4F8A10;
+                background-color: #DFF2BF;
+                background-image:url('/static/success.png');
+            }
+            .error {
+                color: #D8000C;
+                background-color: #FFBABA;
+                background-image: url('/static/error.png');
+            }
+        </style>
+        <script src="/static/jquery-3.3.1.min.js"></script>
+        <script src="/static/moment.min.js"></script>
+        <script src="/static/plotly-latest.min.js"></script>
+        <script>
+            var pits = [];
+            var chartData = [];
+
+            function parsePit(response) {
+                var pit = pits.find(pit => pit.id === response.PitID);
+                if(!pit) {
+                    pit = { id: response.PitID }
+                    pits.push(pit)
+                    $("#pits").append( '<div id="pit'+pit.id+'"></div>' );
+                }
+                pit.healthy = response.Healthy;
+                pit.lastUpdated = response.LastUpdated;
+                pit.levels = response.PitLevels;
+
+                var pitDiv = $("#pit"+pit.id);
+                pitDiv.removeClass("success").removeClass("error");
+                pitDiv.addClass(pit.healthy ? "success" : "error");
+                var status = pit.healthy ? "OK" : "in DANGER!";
+                pitDiv.html(moment(pit.lastUpdated).format("ddd MMM DD hh:mm:ss A")+" "+getPitName(pit.id)+" is "+status);
+                return pit;
+            }
+
+            function parsePitLevels(response) {
+                $.each(response, function(i, p) {
+                    var pit = parsePit(p);
+                    $.each(pit.levels, function(i, pitLevel) {
+                        parsePitLevel(pitLevel);
+                    });
+                });
+                return chartData;
+            }
+
+            function parsePitLevel(response) {
+                var line = chartData.find(line => line.id === response.PitID);
+                if (!line) {
+                    line = {x: [], y: [], id: response.PitID, name: getPitName(response.PitID), type: 'scatter'};
+                    chartData.push(line);
+                }
+                line.x.push(moment.utc(response.DateCreated).toDate());
+                line.y.push(response.Level);
+            }
+
+            function getPitName(id) {
+                return 'Pump '+id;
+            }
+
+            function wsconnect() {
+                var ws = new WebSocket("ws://" + document.location.host + "/ws");
+                ws.onopen = function() {
+                    console.log("ws connected");
+                };
+                ws.onmessage = function (e) {
+                    var response = JSON.parse(e.data);
+                    if(response.hasOwnProperty("Healthy")) {
+                        parsePit(response);
+                    }
+                    else {
+                        parsePitLevel(response);
+                        Plotly.redraw('chart');
+                    }
+                };
+                ws.onclose = function () {
+                    console.log("ws closed, attempting to reconnect");
+                    setTimeout(wsconnect, 5000);
+                };
+            }
+
+            $(function() {
+                $.ajax({
+                    url: "/pitlevels",
+                    dataType: "json",
+                    success: function(response) {
+                        Plotly.newPlot('chart', parsePitLevels(response));
+                        wsconnect();
+                    },
+                    error: function(error){
+                        console.log(error);
+                    }
+                });
+            });
+        </script>
+    </head>
+    <body>
+        <div id="pits"></div>
+        <div id="chart"></div>
+    </body>
+</html>
